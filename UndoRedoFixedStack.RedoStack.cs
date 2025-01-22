@@ -85,7 +85,7 @@ namespace System.Collections.Generic
                 get
                 {
                     if ((index < 0) || (index >= Count)) throw new IndexOutOfRangeException();
-                    return _this._array[(_this._start + Math.Max(_this._undos - _length, 0) + index) % _this._array.Length];
+                    return _this._array[_this.GetIndex(index + Math.Max(_this._undos - _length, 0))];
                 }
             }
 
@@ -118,7 +118,7 @@ namespace System.Collections.Generic
             {
                 if ((_state < 0) || (_state >= Count)) return false;
 
-                _current = _this._array[(_this._start + Math.Max(_this._undos - _length, 0) + _state) % _this._array.Length];
+                _current = _this._array[_this.GetIndex(_state + Math.Max(_this._undos - _length, 0))];
                 _state++;
                 return true;
             }

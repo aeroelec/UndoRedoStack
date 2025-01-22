@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace System.Collections.Generic
 {
@@ -103,10 +104,10 @@ namespace System.Collections.Generic
         /// Initializes a new instance of the <see cref="UndoRedoFixedStack{T}"/> class that is empty and has the specified capacity.
         /// </summary>
         /// <param name="capacity">The number of elements that the <see cref="UndoRedoFixedStack{T}"/> can contain.</param>
-        /// <exception cref="ArgumentOutOfRangeException">capacity is less than zero.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">capacity is less than or equal to zero.</exception>
         public UndoRedoFixedStack(int capacity)
         {
-            if (capacity < 0) throw new ArgumentOutOfRangeException(nameof(capacity), "capacity is less than zero.");
+            if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity), "capacity is less than or equal to zero.");
             _array = new T[capacity];
             _start = 0;
             _undos = 0;
@@ -118,7 +119,7 @@ namespace System.Collections.Generic
         /// </summary>
         /// <param name="capacity">The number of elements that the <see cref="UndoRedoFixedStack{T}"/> can contain.</param>
         /// <param name="collection">The collection to copy elements from.</param>
-        /// <exception cref="ArgumentOutOfRangeException">capacity is less than zero.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">capacity is less than or equal to zero.</exception>
         /// <exception cref="ArgumentNullException">collection is null.</exception>
         /// <exception cref="ArgumentException">size of collection is bigger than capacity.</exception>
         public UndoRedoFixedStack(int capacity, IEnumerable<T> collection) : this(capacity)
@@ -138,7 +139,7 @@ namespace System.Collections.Generic
         /// <param name="capacity">The number of elements that the <see cref="UndoRedoFixedStack{T}"/> can contain.</param>
         /// <param name="collection">The collection to copy elements from.</param>
         /// <param name="redoCount">The number of elements in <paramref name="collection"/> to push to redo stack.</param>
-        /// <exception cref="ArgumentOutOfRangeException">capacity is less than zero.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">capacity is less than or equal to zero.</exception>
         /// <exception cref="ArgumentNullException">collection is null.</exception>
         /// <exception cref="ArgumentOutOfRangeException">redoCount is less than zero.</exception>
         /// <exception cref="ArgumentException">size of collection is bigger than capacity -or- redoCount is greater than the number of elements in collection.</exception>
@@ -148,6 +149,21 @@ namespace System.Collections.Generic
             if (redoCount > _undos) throw new ArgumentException("redoCount is greater than the number of elements in collection.", nameof(redoCount));
             _redos = redoCount;
             _undos -= redoCount;
+        }
+
+        /// <summary>
+        /// Gets the actual index of the given index within the rolling buffer.
+        /// </summary>
+        /// <param name="index">Desired index.</param>
+        /// <returns>The desired index within the rolling buffer.</returns>
+        private int GetIndex(int index)
+        {
+            Debug.Assert(index >= 0);
+
+            // convert actual index to unsigned integer to deal with overflow (_start + index < 0)
+            uint _index = (uint)(_start + index);
+            _index %= (uint)_array.Length;
+            return (int)_index;
         }
 
         /// <summary>
@@ -235,7 +251,7 @@ namespace System.Collections.Generic
                 }
                 else
                 {
-                    int _index = (_start + _undos) % _array.Length;
+                    int _index = GetIndex(_undos);
                     int _length = _array.Length - _index;
 
                     if (_redos > _length)
@@ -263,7 +279,7 @@ namespace System.Collections.Generic
             {
                 _array[_start] = default;
                 _undos--;
-                _start = (_start + 1) % _array.Length;
+                _start = GetIndex(1);
             }
             else
             {
@@ -279,7 +295,7 @@ namespace System.Collections.Generic
         {
             if (_redos > 0)
             {
-                _array[(_start + _undos + _redos - 1) % _array.Length] = default;
+                _array[GetIndex(_undos + _redos - 1)] = default;
                 _redos--;
             }
             else
@@ -353,7 +369,7 @@ namespace System.Collections.Generic
                 else
                 {
                     _redos -= count;
-                    int _index = (_start + _undos + _redos) % _array.Length;
+                    int _index = GetIndex(_undos + _redos);
                     int _length = _array.Length - _index;
 
                     if (count > _length)
@@ -520,7 +536,7 @@ namespace System.Collections.Generic
         {
             if (_undos > 0)
             {
-                return _array[(_start + _undos - 1) % _array.Length];
+                return _array[GetIndex(_undos - 1)];
             }
             else
             {
@@ -539,7 +555,7 @@ namespace System.Collections.Generic
         {
             if (_redos > 0)
             {
-                return _array[(_start + _undos) % _array.Length];
+                return _array[GetIndex(_undos)];
             }
             else
             {
@@ -558,7 +574,7 @@ namespace System.Collections.Generic
         {
             if (_undos > 0)
             {
-                T item = _array[(_start + _undos - 1) % _array.Length];
+                T item = _array[GetIndex(_undos - 1)];
                 _undos--;
                 _redos++;
                 return item;
@@ -580,7 +596,7 @@ namespace System.Collections.Generic
         {
             if (_redos > 0)
             {
-                T item = _array[(_start + _undos) % _array.Length];
+                T item = _array[GetIndex(_undos)];
                 _undos++;
                 _redos--;
                 return item;
@@ -631,10 +647,9 @@ namespace System.Collections.Generic
         /// <param name="item">The object to push onto the <see cref="UndoRedoFixedStack{T}"/> undo stack. The value can be null for reference types.</param>
         public void Push(T item)
         {
-            _array[(_start + _undos) % _array.Length] = item;
-
             if (_undos < _array.Length)
             {
+                _array[GetIndex(_undos)] = item;
                 _undos++;
                 if (_redos > 0)
                 {
@@ -644,7 +659,8 @@ namespace System.Collections.Generic
             }
             else
             {
-                _start = (_start + 1) % _array.Length;
+                _array[_start] = item;
+                _start = GetIndex(1);
             }
         }
 
@@ -659,30 +675,39 @@ namespace System.Collections.Generic
 
             using (IEnumerator<T> enumerator = collection.GetEnumerator())
             {
+                int _count = 0;
                 while (enumerator.MoveNext())
                 {
                     if (_undos < _array.Length)
                     {
-                        _array[(_start + _undos) % _array.Length] = enumerator.Current;
+                        _array[GetIndex(_undos)] = enumerator.Current;
                         _undos++;
-                        if (_redos > 0) _redos--;
+                        _count++;
                     }
                     else
                     {
                         do
                         {
                             _array[_start] = enumerator.Current;
-                            _start = (_start + 1) % _array.Length;
+                            _start = GetIndex(1);
                         }
                         while (enumerator.MoveNext());
 
-                        // _redos == 0, no need to call ClearRedo()
+                        _redos = 0;
                         return;
                     }
                 }
-            }
 
-            ClearRedo();
+                if (_redos > _count)
+                {
+                    _redos -= _count;
+                    ClearRedo();
+                }
+                else
+                {
+                    _redos = 0;
+                }
+            }
         }
 
         /// <summary>
