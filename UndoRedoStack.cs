@@ -399,7 +399,7 @@ namespace System.Collections.Generic
         {
             if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count), "count is less than or equal to zero.");
             int _count = _stack.Count - _redos;
-            if  (count > _count) throw new ArgumentException("count is greater than the number of undo objects.", nameof(count));
+            if (count > _count) throw new ArgumentException("count is greater than the number of undo objects.", nameof(count));
 
             _redos += count;
             return new UndoStack(this, count);
@@ -441,10 +441,7 @@ namespace System.Collections.Generic
             if (collection == null) throw new ArgumentNullException(nameof(collection), "collection is null.");
 
             ClearRedo();
-            foreach (T element in collection)
-            {
-                _stack.Add(element);
-            }
+            _stack.AddRange(collection);
         }
 
         /// <summary>

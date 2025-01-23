@@ -450,9 +450,9 @@ namespace System.Collections.Generic
         public void CopyTo(T[] array, int arrayIndex)
         {
             int _count = _undos + _redos;
-            if ((_start + _count) > array.Length)
+            int _length = _array.Length - _start;
+            if (_count > _length)
             {
-                int _length = _array.Length - _start;
                 Array.Copy(_array, _start, array, arrayIndex, _length);
                 Array.Copy(_array, 0, array, arrayIndex + _length, _count - _length);
             }
@@ -476,9 +476,9 @@ namespace System.Collections.Generic
             if (array.Rank != 1) throw new ArgumentException("array is multidimensional.", nameof(array));
 
             int _count = _undos + _redos;
-            if ((_start + _count) > array.Length)
+            int _length = _array.Length - _start;
+            if (_count > _length)
             {
-                int _length = _array.Length - _start;
                 Array.Copy(_array, _start, array, arrayIndex, _length);
                 Array.Copy(_array, 0, array, arrayIndex + _length, _count - _length);
             }
@@ -496,22 +496,7 @@ namespace System.Collections.Generic
         /// </returns>
         public IEnumerator<T> GetEnumerator()
         {
-            int _count = _undos + _redos;
-
-            for (int i = 0, j = _start; i < _count; i++)
-            {
-                yield return _array[j];
-
-                j++;
-                if (j >= _array.Length)
-                {
-                    for (j = 0, i++; i < _count; i++, j++)
-                    {
-                        yield return _array[j];
-                    }
-                    yield break;
-                }
-            }
+            return new Enumerator(this);
         }
 
         /// <summary>
@@ -522,7 +507,7 @@ namespace System.Collections.Generic
         /// </returns>
         IEnumerator IEnumerable.GetEnumerator()
         {
-            return GetEnumerator();
+            return new Enumerator(this);
         }
 
         /// <summary>
