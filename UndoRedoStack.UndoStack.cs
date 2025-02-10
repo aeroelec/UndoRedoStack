@@ -1,6 +1,4 @@
-﻿using System.Diagnostics;
-
-namespace System.Collections.Generic
+﻿namespace System.Collections.Generic
 {
     public partial class UndoRedoStack<T>
     {
@@ -8,27 +6,20 @@ namespace System.Collections.Generic
         /// If initialized with count == 0, <see cref="IReadOnlyList{T}"/> of <see cref="UndoRedoStack{T}"/> undo stack.
         /// Otherwise, <see cref="IReadOnlyList{T}"/> of count items popped from <see cref="UndoRedoStack{T}"/> undo stack.
         /// </summary>
-        private sealed class UndoStack : IReadOnlyList<T>, IReadOnlyCollection<T>, ICollection, IEnumerable<T>, IEnumerable, IEnumerator<T>, IEnumerator
+        private sealed class UndoStack : IReadOnlyList<T>, IReadOnlyCollection<T>, ICollection, IEnumerable<T>, IEnumerable
         {
-            private readonly int _length;
             private readonly UndoRedoStack<T> _this;
-            private readonly int _threadId;
-            private int _state;
-            private T _current;
+            private readonly int _version;
+            private readonly int _count;
 
             /// <summary>
             /// Initializes a new instance of the <see cref="UndoStack{T}"/> class.
             /// </summary>
-            public UndoStack(UndoRedoStack<T> stack, int count)
+            internal UndoStack(UndoRedoStack<T> stack, int count)
             {
-                Debug.Assert(stack != null);
-                Debug.Assert(count >= 0);
-
-                _length = count;
                 _this = stack;
-                _threadId = Environment.CurrentManagedThreadId;
-                _state = -1;
-                _current = default;
+                _version = stack._version;
+                _count = count;
             }
 
             /// <summary>
@@ -53,7 +44,70 @@ namespace System.Collections.Generic
             /// <returns>
             /// The number of undos contained in the <see cref="UndoRedoStack{T}"/>.
             /// </returns>
-            public int Count => _length == 0 ? _this._stack.Count - _this._redos : Math.Min(_length, _this._redos);
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
+            public int Count
+            {
+                get
+                {
+                    if (_count > 0)
+                    {
+                        if (_version != _this._version) throw new InvalidOperationException("version has changed.");
+
+                        return _count;
+                    }
+                    else
+                    {
+                        return _this._undos;
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Pushes the elements of the undo stack to an <see cref="UndoRedoStack{T}"/>.
+            /// </summary>
+            /// <param name="stack"><see cref="UndoRedoStack{T}"/> to push elements of the undo stack.</param>
+            /// <exception cref="InvalidOperationException">cannot push <see cref="UndoRedoStack{T}"/> onto itself. -or- version has changed.</exception>
+            internal void PushTo(UndoRedoStack<T> stack)
+            {
+                if (stack == _this) throw new InvalidOperationException($"cannot push {nameof(UndoRedoStack<T>)} onto itself.");
+
+                if (_count > 0)
+                {
+                    if (_version != _this._version) throw new InvalidOperationException("version has changed.");
+
+                    // indicate stack version change
+                    stack._version++;
+
+                    stack.EnsureCapacity(stack._undos + _count);
+                    Array.Copy(_this._array, _this._undos, stack._array, stack._undos, _count);
+                    if (_count > 1) Array.Reverse(stack._array, stack._undos, _count);
+                    stack._undos += _count;
+
+                    if (stack._redos > _count)
+                    {
+                        Array.Clear(stack._array, stack._undos, stack._redos - _count);
+                    }
+                    stack._redos = 0;
+                }
+                else if (_this._undos > 0)
+                {
+                    int length = _this._undos;
+
+                    // indicate version change
+                    stack._version++;
+
+                    stack.EnsureCapacity(stack._undos + length);
+                    Array.Copy(_this._array, 0, stack._array, stack._undos, length);
+                    if (length > 1) Array.Reverse(stack._array, stack._undos, length);
+                    stack._undos += length;
+
+                    if (stack._redos > length)
+                    {
+                        Array.Clear(stack._array, stack._undos, stack._redos - length);
+                    }
+                    stack._redos = 0;
+                }
+            }
 
             /// <summary>
             /// Copies the elements of the <see cref="ICollection"/> to an <see cref="Array"/>, starting at a particular <see cref="Array"/> index.
@@ -63,17 +117,26 @@ namespace System.Collections.Generic
             /// <exception cref="ArgumentNullException">array is null.</exception>
             /// <exception cref="ArgumentOutOfRangeException">arrayIndex is less than zero.</exception>
             /// <exception cref="ArgumentException">array is multidimensional. -or- array does not have zero-based indexing. -or- The number of elements in the source <see cref="ICollection"/> is greater than the available space from arrayIndex to the end of the destination array. -or- The type of the source <see cref="ICollection"/> cannot be cast automatically to the type of the destination array.</exception>
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
             void ICollection.CopyTo(Array array, int arrayIndex)
             {
                 if (array == null) throw new ArgumentNullException(nameof(array), "array is null.");
+                if (arrayIndex < 0) throw new ArgumentOutOfRangeException(nameof(arrayIndex), "arrayIndex is less than zero.");
                 if (array.Rank != 1) throw new ArgumentException("array is multidimensional.", nameof(array));
+                if (array.GetLowerBound(0) != 0) throw new ArgumentException("array does not have zero-based indexing.", nameof(array));
 
-                int _index = _this._stack.Count + Math.Min(_length - _this._redos, 0) - 1;
-                for (int _count = Count; _count > 0; _count--)
+                if (_count > 0)
                 {
-                    array.SetValue(_this._stack[_index], arrayIndex);
-                    arrayIndex++;
-                    _index--;
+                    if (_version != _this._version) throw new InvalidOperationException("version has changed.");
+
+                    Array.Copy(_this._array, _this._undos, array, arrayIndex, _count);
+                    if (_count > 1) Array.Reverse(array, arrayIndex, _count);
+                }
+                else if (_this._undos > 0)
+                {
+                    int length = _this._undos;
+                    Array.Copy(_this._array, 0, array, arrayIndex, length);
+                    if (length > 1) Array.Reverse(array, arrayIndex, length);
                 }
             }
 
@@ -83,22 +146,19 @@ namespace System.Collections.Generic
             /// <returns>
             /// An <see cref="IEnumerator{T}"/> that can be used to iterate through the collection.
             /// </returns>
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
             public IEnumerator<T> GetEnumerator()
             {
-                UndoStack _enum;
-                if ((_state == -1) && (_threadId == Environment.CurrentManagedThreadId))
+                if (_count > 0)
                 {
-                    _state = 0;
-                    _enum = this;
+                    if (_version != _this._version) throw new InvalidOperationException("version has changed.");
+
+                    return new Enumerator(_this, _this._undos + _count - 1, -_count, _version);
                 }
                 else
                 {
-                    _enum = new UndoStack(_this, _length)
-                    {
-                        _state = 0
-                    };
+                    return new Enumerator(_this, _this._undos - 1, -_this._undos, _this._version);
                 }
-                return _enum;
             }
 
             /// <summary>
@@ -107,6 +167,7 @@ namespace System.Collections.Generic
             /// <returns>
             /// An <see cref="IEnumerator{T}"/> that can be used to iterate through the collection.
             /// </returns>
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
             IEnumerator IEnumerable.GetEnumerator()
             {
                 return GetEnumerator();
@@ -117,59 +178,27 @@ namespace System.Collections.Generic
             /// </summary>
             /// <param name="index">The zero-based index of the element to get.</param>
             /// <returns>The element at the specified index in the read-only list.</returns>
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
             /// <exception cref="IndexOutOfRangeException"><paramref name="index"/> is less than zero -or- greater than or equal to <see cref="Count"/>.</exception>
             public T this[int index]
             {
                 get
                 {
-                    if ((index < 0) || (index >= Count)) throw new IndexOutOfRangeException();
-                    return _this._stack[_this._stack.Count + Math.Min(_length - _this._redos, 0) - index - 1];
-                }
-            }
+                    if (_count > 0)
+                    {
+                        if (_version != _this._version) throw new InvalidOperationException("version has changed.");
+                        if ((index < 0) || (index >= _count)) throw new IndexOutOfRangeException();
 
-            /// <summary>
-            /// Gets the element in the collection at the current position of the enumerator.
-            /// </summary>
-            /// <returns>
-            /// The element in the collection at the current position of the enumerator.
-            /// </returns>
-            T IEnumerator<T>.Current => _current;
+                        index = _this._undos + _count - index - 1;
+                    }
+                    else
+                    {
+                        if ((index < 0) || (index >= _this._undos)) throw new IndexOutOfRangeException();
 
-            /// <summary>
-            /// Gets the element in the collection at the current position of the enumerator.
-            /// </summary>
-            /// <returns>
-            /// The element in the collection at the current position of the enumerator.
-            /// </returns>
-            object IEnumerator.Current => _current;
+                        index = _this._undos - index - 1;
+                    }
 
-            /// <summary>
-            /// Provides a mechanism for releasing unmanaged resources.
-            /// </summary>
-            void IDisposable.Dispose() { }
-
-            /// <summary>
-            /// Advances the enumerator to the next element of the collection.
-            /// </summary>
-            /// <returns>true if the enumerator was successfully advanced to the next element; false if the enumerator has passed the end of the collection.</returns>
-            bool IEnumerator.MoveNext()
-            {
-                if ((_state < 0) || (_state >= Count)) return false;
-
-                _state++;
-                _current = _this._stack[_this._stack.Count + Math.Min(_length - _this._redos, 0) - _state];
-                return true;
-            }
-
-            /// <summary>
-            /// Sets the enumerator to its initial position, which is before the first element in the collection.
-            /// </summary>
-            void IEnumerator.Reset()
-            {
-                if (_state > 0)
-                {
-                    _state = 0;
-                    _current = default;
+                    return _this._array[index];
                 }
             }
         }

@@ -1,13 +1,13 @@
 ﻿namespace System.Collections.Generic
 {
-    public partial class UndoRedoFixedStack<T>
+    public partial class UndoRedoStack<T>
     {
         /// <summary>
-        /// Enumerator for <see cref="UndoRedoFixedStack{T}"/>.
+        /// Enumerator for <see cref="UndoRedoStack{T}"/>.
         /// </summary>
         private struct Enumerator : IEnumerator<T>, IEnumerator
         {
-            private readonly UndoRedoFixedStack<T> _this;
+            private readonly UndoRedoStack<T> _this;
             private readonly int _version;
             private readonly int _count;
             private int _index;
@@ -17,7 +17,7 @@
             /// <summary>
             /// Initializes a new instance of the <see cref="Enumerator{T}"/> class.
             /// </summary>
-            internal Enumerator(UndoRedoFixedStack<T> stack, int start, int count, int version)
+            internal Enumerator(UndoRedoStack<T> stack, int start, int count, int version)
             {
                 _this = stack;
                 _version = version;
@@ -71,12 +71,11 @@
                     {
                         _index--;
                         _ptr--;
-                        if (_ptr < 0) _ptr += _this._array.Length;
                     }
                     else
                     {
                         _index++;
-                        _ptr = (_ptr + 1) % _this._array.Length;
+                        _ptr++;
                     }
 
                     return true;
@@ -92,14 +91,6 @@
                 if (_version != _this._version) throw new InvalidOperationException("version has changed.");
 
                 _ptr -= _index;
-                if (_index < 0)
-                {
-                    _ptr = (int)(((uint)_ptr) % ((uint)_this._array.Length));
-                }
-                else if (_ptr < 0)
-                {
-                    _ptr += _this._array.Length;
-                }
 
                 _index = 0;
                 _current = default;

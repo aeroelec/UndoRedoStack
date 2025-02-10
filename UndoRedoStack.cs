@@ -1,19 +1,76 @@
-﻿using System.Runtime.InteropServices;
-
-namespace System.Collections.Generic
+﻿namespace System.Collections.Generic
 {
     /// <summary>
     /// Represents a variable size, undo/redo last-in-first-out (LIFO) collection of instances of the same specified type.
     /// </summary>
     /// <typeparam name="T">Specifies the type of elements in the undo/redo stack.</typeparam>
     [Serializable]
-    [ComVisible(false)]
     public partial class UndoRedoStack<T> : IReadOnlyCollection<T>, ICollection, IEnumerable<T>, IEnumerable
     {
-        private readonly List<T> _stack;
+        private const int _defaultCapacity = 4;
+
+        private T[] _array;
+        private int _version;
+        private int _undos;
         private int _redos;
-        private UndoStack _undostack = null;
-        private RedoStack _redostack = null;
+        private UndoStack _undostack;
+        private RedoStack _redostack;
+
+        [NonSerialized]
+        private object _syncRoot;
+
+        private static readonly T[] _emptyArray = new T[0];
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="UndoRedoStack{T}"/> class that is empty and has the default initial capacity.
+        /// </summary>
+        public UndoRedoStack()
+        {
+            _array = _emptyArray;
+            _version = 0;
+            _undos = 0;
+            _redos = 0;
+            _undostack = null;
+            _redostack = null;
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="UndoRedoStack{T}"/> class that is empty and has the specified initial capacity.
+        /// </summary>
+        /// <param name="capacity">The initial number of elements that the <see cref="UndoRedoStack{T}"/> can contain.</param>
+        /// <exception cref="ArgumentOutOfRangeException">capacity is less than zero.</exception>
+        public UndoRedoStack(int capacity) : this()
+        {
+            if (capacity < 0) throw new ArgumentOutOfRangeException(nameof(capacity), "capacity is less than zero.");
+
+            if (capacity > 0) _array = new T[capacity];
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="UndoRedoStack{T}"/> class that contains elements copied from the specified collection as undo elements and has sufficient capacity to accommodate the number of elements copied.
+        /// </summary>
+        /// <param name="collection">The collection to copy elements from.</param>
+        /// <exception cref="ArgumentNullException">collection is null.</exception>
+        public UndoRedoStack(IEnumerable<T> collection) : this()
+        {
+            Push(collection);
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="UndoRedoStack{T}"/> class that contains elements copied from the specified collection as undo elements with specified redo elements and has sufficient capacity to accommodate the number of elements copied.
+        /// </summary>
+        /// <param name="collection">The collection to copy elements from.</param>
+        /// <param name="redoCount">The number of elements in <paramref name="collection"/> to push to redo stack.</param>
+        /// <exception cref="ArgumentNullException">collection is null.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">redoCount is less than zero.</exception>
+        /// <exception cref="ArgumentException">redoCount is greater than the number of elements in collection.</exception>
+        public UndoRedoStack(IEnumerable<T> collection, int redoCount) : this(collection)
+        {
+            if (redoCount < 0) throw new ArgumentOutOfRangeException(nameof(redoCount), "redoCount is less than zero.");
+            if (redoCount > _undos) throw new ArgumentException("redoCount is greater than the number of elements in collection.", nameof(redoCount));
+            _redos = redoCount;
+            _undos -= redoCount;
+        }
 
         /// <summary>
         /// Gets or sets the total number of elements the internal data structure can hold without resizing.
@@ -25,8 +82,55 @@ namespace System.Collections.Generic
         /// <exception cref="OutOfMemoryException">There is not enough memory available on the system.</exception>
         public int Capacity
         {
-            get => _stack.Capacity;
-            set => _stack.Capacity = value;
+            get => _array.Length;
+            set
+            {
+                int _size = _undos + _redos;
+                if (value < _size) throw new ArgumentOutOfRangeException(nameof(Capacity), "Capacity is set to a value that is less than Count.");
+
+                if (value != _array.Length)
+                {
+                    if (value > 0)
+                    {
+                        T[] newArray = new T[value];
+                        if (_size > 0)
+                        {
+                            Array.Copy(_array, 0, newArray, 0, _size);
+                        }
+                        _array = newArray;
+                    }
+                    else
+                    {
+                        _array = _emptyArray;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Ensures that the capacity of this list is at least the specified capacity.
+        /// If the current capacity is less than capacity, it is successively increased to twice the current capacity until it is at least the specified capacity.
+        /// </summary>
+        /// <param name="capacity">The minimum capacity to ensure.</param>
+        /// <remarks>EnsureCapacity is used to ensure items can be pushed onto the undo stack. Therefore, it does not maintain redo stack if <paramref name="capacity"/> greater than <seealso cref="Capacity"/>.</remarks>
+        private void EnsureCapacity(int capacity)
+        {
+            if (_array.Length < capacity)
+            {
+                int newCapacity = _array.Length == 0 ? _defaultCapacity : _array.Length * 2;
+                // Allow the list to grow to maximum possible capacity (~2G elements) before encountering overflow.
+                // Note that this check works even when _items.Length overflowed thanks to the (uint) cast
+                if ((uint)newCapacity > Array.MaxLength) newCapacity = Array.MaxLength;
+                if (newCapacity < capacity) newCapacity = capacity;
+
+                T[] newArray = new T[newCapacity];
+                if (_undos > 0)
+                {
+                    Array.Copy(_array, 0, newArray, 0, _undos);
+                }
+                _redos = 0;
+                _array = newArray;
+            }
         }
 
         /// <summary>
@@ -35,7 +139,23 @@ namespace System.Collections.Generic
         /// <returns>
         /// The number of elements contained in the <see cref="UndoRedoStack{T}"/>.
         /// </returns>
-        public int Count => _stack.Count;
+        public int Count => _undos + _redos;
+
+        /// <summary>
+        /// Gets the number of undos contained in the <see cref="UndoRedoFixedStack{T}"/>.
+        /// </summary>
+        /// <returns>
+        /// The number of undos contained in the <see cref="UndoRedoFixedStack{T}"/>.
+        /// </returns>
+        public int CountUndos => _undos;
+
+        /// <summary>
+        /// Gets the number of redos contained in the <see cref="UndoRedoFixedStack{T}"/>.
+        /// </summary>
+        /// <returns>
+        /// The number of redos contained in the <see cref="UndoRedoFixedStack{T}"/>.
+        /// </returns>
+        public int CountRedos => _redos;
 
         /// <summary>
         /// Gets the undos stack contained in the <see cref="UndoRedoStack{T}"/>.
@@ -87,53 +207,17 @@ namespace System.Collections.Generic
         /// <returns>
         /// An object that can be used to synchronize access to the <see cref="ICollection"/>. In the default implementation of <see cref="UndoRedoStack{T}"/>, this property always returns the current instance.
         /// </returns>
-        object ICollection.SyncRoot => ((ICollection)_stack).SyncRoot;
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="UndoRedoStack{T}"/> class that is empty and has the default initial capacity.
-        /// </summary>
-        public UndoRedoStack()
+        object ICollection.SyncRoot
         {
-            _stack = new List<T>();
-            _redos = 0;
-        }
+            get
+            {
+                if (_syncRoot == null)
+                {
+                    System.Threading.Interlocked.CompareExchange<object>(ref _syncRoot, new object(), null);
+                }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="UndoRedoStack{T}"/> class that is empty and has the specified initial capacity.
-        /// </summary>
-        /// <param name="capacity">The initial number of elements that the <see cref="UndoRedoStack{T}"/> can contain.</param>
-        /// <exception cref="ArgumentOutOfRangeException">capacity is less than zero.</exception>
-        public UndoRedoStack(int capacity)
-        {
-            _stack = new List<T>(capacity);
-            _redos = 0;
-        }
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="UndoRedoStack{T}"/> class that contains elements copied from the specified collection as undo elements and has sufficient capacity to accommodate the number of elements copied.
-        /// </summary>
-        /// <param name="collection">The collection to copy elements from.</param>
-        /// <exception cref="ArgumentNullException">collection is null.</exception>
-        public UndoRedoStack(IEnumerable<T> collection)
-        {
-            _stack = new List<T>(collection);
-            _redos = 0;
-        }
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="UndoRedoStack{T}"/> class that contains elements copied from the specified collection as undo elements with specified redo elements and has sufficient capacity to accommodate the number of elements copied.
-        /// </summary>
-        /// <param name="collection">The collection to copy elements from.</param>
-        /// <param name="redoCount">The number of elements in <paramref name="collection"/> to push to redo stack.</param>
-        /// <exception cref="ArgumentNullException">collection is null.</exception>
-        /// <exception cref="ArgumentOutOfRangeException">redoCount is less than zero.</exception>
-        /// <exception cref="ArgumentException">redoCount is greater than the number of elements in collection.</exception>
-        public UndoRedoStack(IEnumerable<T> collection, int redoCount)
-        {
-            if (redoCount < 0) throw new ArgumentOutOfRangeException(nameof(redoCount), "redoCount is less than zero.");
-            _stack = new List<T>(collection);
-            if (redoCount > _stack.Count) throw new ArgumentException("redoCount is greater than the number of elements in collection.", nameof(redoCount));
-            _redos = redoCount;
+                return _syncRoot;
+            }
         }
 
         /// <summary>
@@ -141,8 +225,17 @@ namespace System.Collections.Generic
         /// </summary>
         public void Clear()
         {
-            _stack.Clear();
-            _redos = 0;
+            int _count = _undos + _redos;
+            if (_count > 0)
+            {
+                // indicate version change
+                _version++;
+
+                Array.Clear(_array, 0, _count);
+
+                _undos = 0;
+                _redos = 0;
+            }
         }
 
         /// <summary>
@@ -150,8 +243,19 @@ namespace System.Collections.Generic
         /// </summary>
         public void ClearUndo()
         {
-            int _count = _stack.Count - _redos;
-            if (_count > 0) _stack.RemoveRange(0, _count);
+            if (_undos > 0)
+            {
+                // indicate version change
+                _version++;
+
+                if (_redos > 0)
+                {
+                    Array.Copy(_array, _undos, _array, 0, _redos);
+                }
+                Array.Clear(_array, _redos, _undos);
+
+                _undos = 0;
+            }
         }
 
         /// <summary>
@@ -161,7 +265,11 @@ namespace System.Collections.Generic
         {
             if (_redos > 0)
             {
-                _stack.RemoveRange(_stack.Count - _redos, _redos);
+                // indicate version change
+                _version++;
+
+                Array.Clear(_array, _undos, _redos);
+
                 _redos = 0;
             }
         }
@@ -172,10 +280,19 @@ namespace System.Collections.Generic
         /// <exception cref="InvalidOperationException">The undo stack is empty.</exception>
         public void RemoveUndo()
         {
-            int _count = _stack.Count - _redos;
-            if (_count > 0)
+            if (_undos > 0)
             {
-                _stack.RemoveAt(0);
+                // indicate version change
+                _version++;
+
+                _undos--;
+                int _count = _undos + _redos;
+
+                if (_count > 0)
+                {
+                    Array.Copy(_array, 1, _array, 0, _count);
+                }
+                _array[_count] = default;
             }
             else
             {
@@ -191,8 +308,11 @@ namespace System.Collections.Generic
         {
             if (_redos > 0)
             {
-                _stack.RemoveAt(_stack.Count - 1);
+                // indicate version change
+                _version++;
+
                 _redos--;
+                _array[_undos + _redos] = default;
             }
             else
             {
@@ -209,14 +329,19 @@ namespace System.Collections.Generic
         public void RemoveUndo(int count)
         {
             if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count), "count is less than or equal to zero.");
-            if (count <= (_stack.Count - _redos))
+            if (count > _undos) throw new ArgumentException("count is greater than the number of undo objects.", nameof(count));
+
+            // indicate version change
+            _version++;
+
+            _undos -= count;
+            int _count = _undos + _redos;
+
+            if (_count > 0)
             {
-                _stack.RemoveRange(0, count);
+                Array.Copy(_array, count, _array, 0, _count);
             }
-            else
-            {
-                throw new ArgumentException("count is greater than the number of undo objects.", nameof(count));
-            }
+            Array.Clear(_array, _count, count);
         }
 
         /// <summary>
@@ -228,15 +353,13 @@ namespace System.Collections.Generic
         public void RemoveRedo(int count)
         {
             if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count), "count is less than or equal to zero.");
-            if (count <= _redos)
-            {
-                _stack.RemoveRange(_stack.Count - count, count);
-                _redos -= count;
-            }
-            else
-            {
-                throw new ArgumentException("count is greater than the number of redo objects.", nameof(count));
-            }
+            if (count > _redos) throw new ArgumentException("count is greater than the number of redo objects.", nameof(count));
+
+            // indicate version change
+            _version++;
+
+            _redos -= count;
+            Array.Clear(_array, _undos + _redos, count);
         }
 
         /// <summary>
@@ -248,7 +371,24 @@ namespace System.Collections.Generic
         /// </returns>
         public bool Contains(T item)
         {
-            return _stack.Contains(item);
+            int _count = _undos + _redos;
+
+            if (item == null)
+            {
+                for (int i = 0; i < _count; i++)
+                {
+                    if (_array[0] == null) return true;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < _count; i++)
+                {
+                    if (item.Equals(_array[i])) return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -261,7 +401,7 @@ namespace System.Collections.Generic
         /// <exception cref="ArgumentException">The number of elements in the source <see cref="UndoRedoStack{T}"/> is greater than the available space from arrayIndex to the end of the destination array.</exception>
         public void CopyTo(T[] array, int arrayIndex)
         {
-            _stack.CopyTo(array, arrayIndex);
+            Array.Copy(_array, 0, array, arrayIndex, _undos + _redos);
         }
 
         /// <summary>
@@ -274,7 +414,7 @@ namespace System.Collections.Generic
         /// <exception cref="ArgumentException">array is multidimensional. -or- array does not have zero-based indexing. -or- The number of elements in the source <see cref="ICollection"/> is greater than the available space from arrayIndex to the end of the destination array. -or- The type of the source <see cref="ICollection"/> cannot be cast automatically to the type of the destination array.</exception>
         void ICollection.CopyTo(Array array, int arrayIndex)
         {
-            ((ICollection)_stack).CopyTo(array, arrayIndex);
+            Array.Copy(_array, 0, array, arrayIndex, _undos + _redos);
         }
 
         /// <summary>
@@ -285,7 +425,7 @@ namespace System.Collections.Generic
         /// </returns>
         public IEnumerator<T> GetEnumerator()
         {
-            return _stack.GetEnumerator();
+            return new Enumerator(this, 0, _undos + _redos, _version);
         }
 
         /// <summary>
@@ -296,7 +436,7 @@ namespace System.Collections.Generic
         /// </returns>
         IEnumerator IEnumerable.GetEnumerator()
         {
-            return ((IEnumerable)_stack).GetEnumerator();
+            return GetEnumerator();
         }
 
         /// <summary>
@@ -304,7 +444,12 @@ namespace System.Collections.Generic
         /// </summary>
         public void TrimExcess()
         {
-            _stack.TrimExcess();
+            int _count = _undos + _redos;
+            int threshold = (int)(((double)_array.Length) * 0.9);
+            if (_count < threshold)
+            {
+                Capacity = _count;
+            }
         }
 
         /// <summary>
@@ -316,10 +461,9 @@ namespace System.Collections.Generic
         /// <exception cref="InvalidOperationException">The undo stack is empty.</exception>
         public T PeekUndo()
         {
-            int _count = _stack.Count - _redos;
-            if (_count > 0)
+            if (_undos > 0)
             {
-                return _stack[_count - 1];
+                return _array[_undos - 1];
             }
             else
             {
@@ -338,7 +482,7 @@ namespace System.Collections.Generic
         {
             if (_redos > 0)
             {
-                return _stack[_stack.Count - _redos];
+                return _array[_undos];
             }
             else
             {
@@ -355,11 +499,14 @@ namespace System.Collections.Generic
         /// <exception cref="InvalidOperationException">The undo stack is empty.</exception>
         public T PopUndo()
         {
-            int _count = _stack.Count - _redos;
-            if (_count > 0)
+            if (_undos > 0)
             {
+                // indicate version change
+                _version++;
+
+                _undos--;
                 _redos++;
-                return _stack[_count - 1];
+                return _array[_undos];
             }
             else
             {
@@ -378,9 +525,13 @@ namespace System.Collections.Generic
         {
             if (_redos > 0)
             {
-                int index = _stack.Count - _redos;
+                // indicate version change
+                _version++;
+
+                T redo = _array[_undos];
+                _undos++;
                 _redos--;
-                return _stack[index];
+                return redo;
             }
             else
             {
@@ -398,9 +549,12 @@ namespace System.Collections.Generic
         public IReadOnlyList<T> PopUndo(int count)
         {
             if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count), "count is less than or equal to zero.");
-            int _count = _stack.Count - _redos;
-            if (count > _count) throw new ArgumentException("count is greater than the number of undo objects.", nameof(count));
+            if (count > _undos) throw new ArgumentException("count is greater than the number of undo objects.", nameof(count));
 
+            // indicate version change
+            _version++;
+
+            _undos -= count;
             _redos += count;
             return new UndoStack(this, count);
         }
@@ -417,6 +571,10 @@ namespace System.Collections.Generic
             if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count), "count is less than or equal to zero.");
             if (count > _redos) throw new ArgumentException("count is greater than the number of redo objects.", nameof(count));
 
+            // indicate version change
+            _version++;
+
+            _undos += count;
             _redos -= count;
             return new RedoStack(this, count);
         }
@@ -427,8 +585,18 @@ namespace System.Collections.Generic
         /// <param name="item">The object to push onto the <see cref="UndoRedoStack{T}"/> undo stack. The value can be null for reference types.</param>
         public void Push(T item)
         {
-            ClearRedo();
-            _stack.Add(item);
+            // indicate version change
+            _version++;
+
+            EnsureCapacity(_undos + 1);
+            _array[_undos] = item;
+
+            _undos++;
+            if (_redos > 1)
+            {
+                Array.Clear(_array, _undos, _redos - 1);
+            }
+            _redos = 0;
         }
 
         /// <summary>
@@ -436,12 +604,81 @@ namespace System.Collections.Generic
         /// </summary>
         /// <param name="collection">The collection to push onto the <see cref="UndoRedoStack{T}"/> undo stack.</param>
         /// <exception cref="ArgumentNullException">collection is null.</exception>
+        /// <exception cref="InvalidOperationException">cannot push <see cref="UndoRedoStack{T}"/> onto itself.</exception>
         public void Push(IEnumerable<T> collection)
         {
             if (collection == null) throw new ArgumentNullException(nameof(collection), "collection is null.");
 
-            ClearRedo();
-            _stack.AddRange(collection);
+            int _count;
+            switch (collection)
+            {
+                case UndoRedoStack<T> s:
+                    if (s == this) throw new InvalidOperationException($"cannot push {nameof(UndoRedoStack<T>)} onto itself.");
+
+                    _count = s.Count;
+                    if (_count > 0)
+                    {
+                        // indicate version change
+                        _version++;
+
+                        EnsureCapacity(_undos + _count);
+                        s.CopyTo(_array, _undos);
+                        _undos += _count;
+
+                        if (_redos > _count)
+                        {
+                            Array.Clear(_array, _undos, _redos - _count);
+                        }
+                        _redos = 0;
+                    }
+                    break;
+                case UndoStack s:
+                    s.PushTo(this);
+                    break;
+                case RedoStack s:
+                    s.PushTo(this);
+                    break;
+                case ICollection<T> c:
+                    _count = c.Count;
+                    if (_count > 0)
+                    {
+                        // indicate version change
+                        _version++;
+
+                        EnsureCapacity(_undos + _count);
+                        c.CopyTo(_array, _undos);
+                        _undos += _count;
+
+                        if (_redos > _count)
+                        {
+                            Array.Clear(_array, _undos, _redos - _count);
+                        }
+                        _redos = 0;
+                    }
+                    break;
+                default:
+                    using (IEnumerator<T> e = collection.GetEnumerator())
+                    {
+                        // indicate version change; by changing version here, stack can't push itself
+                        _version++;
+
+                        _count = 0;
+                        while (e.MoveNext())
+                        {
+                            EnsureCapacity(_undos + 1);
+                            _array[_undos] = e.Current;
+                            _undos++;
+                            _count++;
+                        }
+
+                        if (_redos > _count)
+                        {
+                            Array.Clear(_array, _undos, _redos - _count);
+                        }
+                        _redos = 0;
+                    }
+                    break;
+            }
         }
 
         /// <summary>
@@ -452,7 +689,10 @@ namespace System.Collections.Generic
         /// </returns>
         public T[] ToArray()
         {
-            return _stack.ToArray();
+            int _count = _undos + _redos;
+            T[] array = new T[_count];
+            if (_count > 0) Array.Copy(_array, 0, array, 0, _count);
+            return array;
         }
     }
 }

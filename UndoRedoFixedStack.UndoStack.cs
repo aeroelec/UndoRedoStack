@@ -1,6 +1,4 @@
-﻿using System.Diagnostics;
-
-namespace System.Collections.Generic
+﻿namespace System.Collections.Generic
 {
     public partial class UndoRedoFixedStack<T>
     {
@@ -8,27 +6,20 @@ namespace System.Collections.Generic
         /// If initialized with count == 0, <see cref="IReadOnlyList{T}"/> of <see cref="UndoRedoFixedStack{T}"/> undo stack.
         /// Otherwise, <see cref="IReadOnlyList{T}"/> of count items popped from <see cref="UndoRedoFixedStack{T}"/> undo stack.
         /// </summary>
-        private sealed class UndoStack : IReadOnlyList<T>, IReadOnlyCollection<T>, ICollection, IEnumerable<T>, IEnumerable, IEnumerator<T>, IEnumerator
+        private sealed class UndoStack : IReadOnlyList<T>, IReadOnlyCollection<T>, ICollection, IEnumerable<T>, IEnumerable
         {
-            private readonly int _length;
             private readonly UndoRedoFixedStack<T> _this;
-            private readonly int _threadId;
-            private int _state;
-            private T _current;
+            private readonly int _version;
+            private readonly int _count;
 
             /// <summary>
             /// Initializes a new instance of the <see cref="UndoStack{T}"/> class.
             /// </summary>
-            public UndoStack(UndoRedoFixedStack<T> stack, int count)
+            internal UndoStack(UndoRedoFixedStack<T> stack, int count)
             {
-                Debug.Assert(stack != null);
-                Debug.Assert(count >= 0);
-
-                _length = count;
                 _this = stack;
-                _threadId = Environment.CurrentManagedThreadId;
-                _state = -1;
-                _current = default;
+                _version = stack._version;
+                _count = count;
             }
 
             /// <summary>
@@ -53,7 +44,23 @@ namespace System.Collections.Generic
             /// <returns>
             /// The number of undos contained in the <see cref="UndoRedoFixedStack{T}"/>.
             /// </returns>
-            public int Count => _length == 0 ? _this._undos : Math.Min(_length, _this._redos);
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
+            public int Count
+            {
+                get
+                {
+                    if (_count > 0)
+                    {
+                        if (_version != _this._version) throw new InvalidOperationException("version has changed.");
+
+                        return _count;
+                    }
+                    else
+                    {
+                        return _this._undos;
+                    }
+                }
+            }
 
             /// <summary>
             /// Copies the elements of the <see cref="ICollection"/> to an <see cref="Array"/>, starting at a particular <see cref="Array"/> index.
@@ -63,18 +70,54 @@ namespace System.Collections.Generic
             /// <exception cref="ArgumentNullException">array is null.</exception>
             /// <exception cref="ArgumentOutOfRangeException">arrayIndex is less than zero.</exception>
             /// <exception cref="ArgumentException">array is multidimensional. -or- array does not have zero-based indexing. -or- The number of elements in the source <see cref="ICollection"/> is greater than the available space from arrayIndex to the end of the destination array. -or- The type of the source <see cref="ICollection"/> cannot be cast automatically to the type of the destination array.</exception>
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
             void ICollection.CopyTo(Array array, int arrayIndex)
             {
                 if (array == null) throw new ArgumentNullException(nameof(array), "array is null.");
+                if (arrayIndex < 0) throw new ArgumentOutOfRangeException(nameof(arrayIndex), "arrayIndex is less than zero.");
                 if (array.Rank != 1) throw new ArgumentException("array is multidimensional.", nameof(array));
+                if (array.GetLowerBound(0) != 0) throw new ArgumentException("array does not have zero-based indexing.", nameof(array));
 
-                int _index = _this.GetIndex(_this._undos + Math.Min(_length, _this._redos) - 1);
-                for (int _count = Count; _count > 0; _count--)
+                if (_count > 0)
                 {
-                    array.SetValue(_this._array[_index], arrayIndex);
-                    arrayIndex++;
-                    _index--;
-                    if (_index < 0) _index += _this._array.Length;
+                    if (_version != _this._version) throw new InvalidOperationException("version has changed.");
+
+                    int length = _this._array.Length - _this._head;
+                    if (_count > length)
+                    {
+                        Array.Copy(_this._array, _this._head, array, arrayIndex, length);
+                        Array.Copy(_this._array, 0, array, arrayIndex + length, _count - length);
+                    }
+                    else
+                    {
+                        Array.Copy(_this._array, _this._head, array, arrayIndex, _count);
+                    }
+
+                    if (_count > 1) Array.Reverse(array, arrayIndex, _count);
+                }
+                else if (_this._undos > 0)
+                {
+                    int _start = _this._head - _this._undos;
+                    if (_start < 0)
+                    {
+                        Array.Copy(_this._array, _start + _this._array.Length, array, arrayIndex, -_start);
+                        Array.Copy(_this._array, 0, array, arrayIndex - _start, _this._undos + _start);
+                    }
+                    else
+                    {
+                        int length = _this._array.Length - _start;
+                        if (_this._undos > length)
+                        {
+                            Array.Copy(_this._array, _start, array, arrayIndex, length);
+                            Array.Copy(_this._array, 0, array, arrayIndex + length, _this._undos - length);
+                        }
+                        else
+                        {
+                            Array.Copy(_this._array, _start, array, arrayIndex, _this._undos);
+                        }
+                    }
+
+                    if (_this._undos > 1) Array.Reverse(array, arrayIndex, _this._undos);
                 }
             }
 
@@ -84,22 +127,22 @@ namespace System.Collections.Generic
             /// <returns>
             /// An <see cref="IEnumerator{T}"/> that can be used to iterate through the collection.
             /// </returns>
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
             public IEnumerator<T> GetEnumerator()
             {
-                UndoStack _enum;
-                if ((_state == -1) && (_threadId == Environment.CurrentManagedThreadId))
+                if (_count > 0)
                 {
-                    _state = 0;
-                    _enum = this;
+                    if (_version != _this._version) throw new InvalidOperationException("version has changed.");
+
+                    int _start = (int)(((uint)(_this._head + _count - 1)) % ((uint)_this._array.Length));
+                    return new Enumerator(_this, _start, -_count, _version);
                 }
                 else
                 {
-                    _enum = new UndoStack(_this, _length)
-                    {
-                        _state = 0
-                    };
+                    int _start = _this._head - 1;
+                    if (_start < 0) _start += _this._array.Length;
+                    return new Enumerator(_this, _start, -_this._undos, _this._version);
                 }
-                return _enum;
             }
 
             /// <summary>
@@ -108,6 +151,7 @@ namespace System.Collections.Generic
             /// <returns>
             /// An <see cref="IEnumerator{T}"/> that can be used to iterate through the collection.
             /// </returns>
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
             IEnumerator IEnumerable.GetEnumerator()
             {
                 return GetEnumerator();
@@ -118,59 +162,28 @@ namespace System.Collections.Generic
             /// </summary>
             /// <param name="index">The zero-based index of the element to get.</param>
             /// <returns>The element at the specified index in the read-only list.</returns>
+            /// <exception cref="InvalidOperationException">version has changed.</exception>
             /// <exception cref="IndexOutOfRangeException"><paramref name="index"/> is less than zero -or- greater than or equal to <see cref="Count"/>.</exception>
             public T this[int index]
             {
                 get
                 {
-                    if ((index < 0) || (index >= Count)) throw new IndexOutOfRangeException();
-                    return _this._array[_this.GetIndex(_this._undos + Math.Min(_length, _this._redos) - index - 1)];
-                }
-            }
+                    if (_count > 0)
+                    {
+                        if (_version != _this._version) throw new InvalidOperationException("version has changed.");
+                        if ((index < 0) || (index >= _count)) throw new IndexOutOfRangeException();
 
-            /// <summary>
-            /// Gets the element in the collection at the current position of the enumerator.
-            /// </summary>
-            /// <returns>
-            /// The element in the collection at the current position of the enumerator.
-            /// </returns>
-            T IEnumerator<T>.Current => _current;
+                        index = (int)(((uint)(_this._head + _count - index - 1)) % ((uint)_this._array.Length));
+                    }
+                    else
+                    {
+                        if ((index < 0) || (index >= _this._undos)) throw new IndexOutOfRangeException();
 
-            /// <summary>
-            /// Gets the element in the collection at the current position of the enumerator.
-            /// </summary>
-            /// <returns>
-            /// The element in the collection at the current position of the enumerator.
-            /// </returns>
-            object IEnumerator.Current => _current;
+                        index = _this._head - index - 1;
+                        if (index < 0) index += _this._array.Length;
+                    }
 
-            /// <summary>
-            /// Provides a mechanism for releasing unmanaged resources.
-            /// </summary>
-            void IDisposable.Dispose() { }
-
-            /// <summary>
-            /// Advances the enumerator to the next element of the collection.
-            /// </summary>
-            /// <returns>true if the enumerator was successfully advanced to the next element; false if the enumerator has passed the end of the collection.</returns>
-            bool IEnumerator.MoveNext()
-            {
-                if ((_state < 0) || (_state >= Count)) return false;
-
-                _state++;
-                _current = _this._array[_this.GetIndex(_this._undos + Math.Min(_length, _this._redos) - _state)];
-                return true;
-            }
-
-            /// <summary>
-            /// Sets the enumerator to its initial position, which is before the first element in the collection.
-            /// </summary>
-            void IEnumerator.Reset()
-            {
-                if (_state > 0)
-                {
-                    _state = 0;
-                    _current = default;
+                    return _this._array[index];
                 }
             }
         }
