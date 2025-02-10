@@ -142,18 +142,18 @@
         public int Count => _undos + _redos;
 
         /// <summary>
-        /// Gets the number of undos contained in the <see cref="UndoRedoFixedStack{T}"/>.
+        /// Gets the number of undos contained in the <see cref="UndoRedoStack{T}"/>.
         /// </summary>
         /// <returns>
-        /// The number of undos contained in the <see cref="UndoRedoFixedStack{T}"/>.
+        /// The number of undos contained in the <see cref="UndoRedoStack{T}"/>.
         /// </returns>
         public int CountUndos => _undos;
 
         /// <summary>
-        /// Gets the number of redos contained in the <see cref="UndoRedoFixedStack{T}"/>.
+        /// Gets the number of redos contained in the <see cref="UndoRedoStack{T}"/>.
         /// </summary>
         /// <returns>
-        /// The number of redos contained in the <see cref="UndoRedoFixedStack{T}"/>.
+        /// The number of redos contained in the <see cref="UndoRedoStack{T}"/>.
         /// </returns>
         public int CountRedos => _redos;
 
