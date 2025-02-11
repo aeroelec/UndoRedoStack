@@ -63,51 +63,6 @@
             }
 
             /// <summary>
-            /// Pushes the elements of the redo stack to an <see cref="UndoRedoStack{T}"/>.
-            /// </summary>
-            /// <param name="stack"><see cref="UndoRedoStack{T}"/> to push elements of the redo stack.</param>
-            /// <exception cref="InvalidOperationException">cannot push <see cref="UndoRedoStack{T}"/> onto itself. -or- version has changed.</exception>
-            internal void PushTo(UndoRedoStack<T> stack)
-            {
-                if (stack == _this) throw new InvalidOperationException($"cannot push {nameof(UndoRedoStack<T>)} onto itself.");
-
-                if (_count > 0)
-                {
-                    if (_version != _this._version) throw new InvalidOperationException("version has changed.");
-
-                    // indicate stack version change
-                    stack._version++;
-
-                    stack.EnsureCapacity(stack._undos + _count);
-                    Array.Copy(_this._array, _this._undos - _count, stack._array, stack._undos, _count);
-                    stack._undos += _count;
-
-                    if (stack._redos > _count)
-                    {
-                        Array.Clear(stack._array, stack._undos, stack._redos - _count);
-                    }
-                    stack._redos = 0;
-                }
-                else if (_this._redos > 0)
-                {
-                    int length = _this._redos;
-
-                    // indicate version change
-                    stack._version++;
-
-                    stack.EnsureCapacity(stack._undos + length);
-                    Array.Copy(_this._array, _this._undos, stack._array, stack._undos, length);
-                    stack._undos += length;
-
-                    if (stack._redos > length)
-                    {
-                        Array.Clear(stack._array, stack._undos, stack._redos - length);
-                    }
-                    stack._redos = 0;
-                }
-            }
-
-            /// <summary>
             /// Copies the elements of the <see cref="ICollection"/> to an <see cref="Array"/>, starting at a particular <see cref="Array"/> index.
             /// </summary>
             /// <param name="array">The one-dimensional <see cref="Array"/> that is the destination of the elements copied from <see cref="ICollection"/>. The <see cref="Array"/> must have zero-based indexing.</param>

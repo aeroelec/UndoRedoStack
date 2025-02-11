@@ -746,56 +746,6 @@
         }
 
         /// <summary>
-        /// Inserts a collection at the top of the <see cref="UndoRedoStack{T}"/> undo stack, clearing the redo stack.
-        /// </summary>
-        /// <param name="collection">The collection to push onto the <see cref="UndoRedoStack{T}"/> undo stack.</param>
-        /// <exception cref="ArgumentNullException">collection is null.</exception>
-        public void Push(IEnumerable<T> collection)
-        {
-            if (collection == null) throw new ArgumentNullException(nameof(collection), "collection is null.");
-
-            using (IEnumerator<T> enumerator = collection.GetEnumerator())
-            {
-                // indicate version change; by changing version here, stack can't push itself
-                _version++;
-
-                int _count = 0;
-                while (enumerator.MoveNext())
-                {
-                    _array[_head] = enumerator.Current;
-                    _head = (_head + 1) % _array.Length;
-
-                    if (_undos < _array.Length)
-                    {
-                        _undos++;
-                        _count++;
-                    }
-                    else
-                    {
-                        while (enumerator.MoveNext())
-                        {
-                            _array[_head] = enumerator.Current;
-                            _head = (_head + 1) % _array.Length;
-                        }
-
-                        _redos = 0;
-                        return;
-                    }
-                }
-
-                if (_redos > _count)
-                {
-                    _redos -= _count;
-                    ClearRedoInternal();
-                }
-                else
-                {
-                    _redos = 0;
-                }
-            }
-        }
-
-        /// <summary>
         /// Copies the <see cref="UndoRedoFixedStack{T}"/> to a new array.
         /// </summary>
         /// <returns>

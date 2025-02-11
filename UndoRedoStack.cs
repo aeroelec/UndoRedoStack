@@ -53,7 +53,37 @@
         /// <exception cref="ArgumentNullException">collection is null.</exception>
         public UndoRedoStack(IEnumerable<T> collection) : this()
         {
-            Push(collection);
+            if (collection == null) throw new ArgumentNullException(nameof(collection), "collection is null.");
+
+            int _count;
+            switch (collection)
+            {
+                case ICollection<T> c:
+                    _count = c.Count;
+                    if (_count > 0)
+                    {
+                        _array = new T[_count];
+                        c.CopyTo(_array, 0);
+                        _undos = _count;
+                    }
+                    break;
+                case IReadOnlyCollection<T> c:
+                    _count = c.Count;
+                    if (_count > 0) _array = new T[_count];
+                    goto default;
+                default:
+                    using (IEnumerator<T> e = collection.GetEnumerator())
+                    {
+                        while (e.MoveNext())
+                        {
+                            _count = _undos + 1;
+                            EnsureCapacity(_count);
+                            _array[_undos] = e.Current;
+                            _undos = _count;
+                        }
+                    }
+                    break;
+            }
         }
 
         /// <summary>
@@ -118,8 +148,8 @@
             if (_array.Length < capacity)
             {
                 int newCapacity = _array.Length == 0 ? _defaultCapacity : _array.Length * 2;
-                // Allow the list to grow to maximum possible capacity (~2G elements) before encountering overflow.
-                // Note that this check works even when _items.Length overflowed thanks to the (uint) cast
+                // Allow the stack to grow to maximum possible capacity (~2G elements) before encountering overflow.
+                // Note that this check works even when _array.Length overflowed thanks to the (uint) cast
                 if ((uint)newCapacity > Array.MaxLength) newCapacity = Array.MaxLength;
                 if (newCapacity < capacity) newCapacity = capacity;
 
@@ -597,88 +627,6 @@
                 Array.Clear(_array, _undos, _redos - 1);
             }
             _redos = 0;
-        }
-
-        /// <summary>
-        /// Inserts a collection at the top of the <see cref="UndoRedoStack{T}"/> undo stack, clearing the redo stack.
-        /// </summary>
-        /// <param name="collection">The collection to push onto the <see cref="UndoRedoStack{T}"/> undo stack.</param>
-        /// <exception cref="ArgumentNullException">collection is null.</exception>
-        /// <exception cref="InvalidOperationException">cannot push <see cref="UndoRedoStack{T}"/> onto itself.</exception>
-        public void Push(IEnumerable<T> collection)
-        {
-            if (collection == null) throw new ArgumentNullException(nameof(collection), "collection is null.");
-
-            int _count;
-            switch (collection)
-            {
-                case UndoRedoStack<T> s:
-                    if (s == this) throw new InvalidOperationException($"cannot push {nameof(UndoRedoStack<T>)} onto itself.");
-
-                    _count = s.Count;
-                    if (_count > 0)
-                    {
-                        // indicate version change
-                        _version++;
-
-                        EnsureCapacity(_undos + _count);
-                        s.CopyTo(_array, _undos);
-                        _undos += _count;
-
-                        if (_redos > _count)
-                        {
-                            Array.Clear(_array, _undos, _redos - _count);
-                        }
-                        _redos = 0;
-                    }
-                    break;
-                case UndoStack s:
-                    s.PushTo(this);
-                    break;
-                case RedoStack s:
-                    s.PushTo(this);
-                    break;
-                case ICollection<T> c:
-                    _count = c.Count;
-                    if (_count > 0)
-                    {
-                        // indicate version change
-                        _version++;
-
-                        EnsureCapacity(_undos + _count);
-                        c.CopyTo(_array, _undos);
-                        _undos += _count;
-
-                        if (_redos > _count)
-                        {
-                            Array.Clear(_array, _undos, _redos - _count);
-                        }
-                        _redos = 0;
-                    }
-                    break;
-                default:
-                    using (IEnumerator<T> e = collection.GetEnumerator())
-                    {
-                        // indicate version change; by changing version here, stack can't push itself
-                        _version++;
-
-                        _count = 0;
-                        while (e.MoveNext())
-                        {
-                            EnsureCapacity(_undos + 1);
-                            _array[_undos] = e.Current;
-                            _undos++;
-                            _count++;
-                        }
-
-                        if (_redos > _count)
-                        {
-                            Array.Clear(_array, _undos, _redos - _count);
-                        }
-                        _redos = 0;
-                    }
-                    break;
-            }
         }
 
         /// <summary>
