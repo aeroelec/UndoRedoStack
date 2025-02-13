@@ -50,16 +50,16 @@
             if (collection is ICollection<T> c)
             {
                 _undos = c.Count;
+                if (_undos < 0) throw new OverflowException("Arithmetic operation resulted in an overflow.");
                 if (_undos > capacity) throw new ArgumentException("size of collection is bigger than capacity.", nameof(collection));
                 if (_undos > 0) c.CopyTo(_array, 0);
             }
             else
             {
-                foreach (T element in collection)
+                foreach (T item in collection)
                 {
                     if (_undos == capacity) throw new ArgumentException("size of collection is bigger than capacity.", nameof(collection));
-                    _array[_undos] = element;
-                    _undos++;
+                    _array[_undos++] = item;
                 }
             }
             _head = _undos;

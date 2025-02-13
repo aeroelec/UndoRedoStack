@@ -55,32 +55,32 @@
         {
             if (collection == null) throw new ArgumentNullException(nameof(collection), "collection is null.");
 
-            int _count;
             switch (collection)
             {
                 case ICollection<T> c:
-                    _count = c.Count;
-                    if (_count > 0)
+                    _undos = c.Count;
+                    if (_undos != 0)
                     {
-                        _array = new T[_count];
+                        _array = new T[_undos];
                         c.CopyTo(_array, 0);
-                        _undos = _count;
                     }
                     break;
                 case IReadOnlyCollection<T> c:
-                    _count = c.Count;
-                    if (_count > 0) _array = new T[_count];
-                    goto default;
-                default:
-                    using (IEnumerator<T> e = collection.GetEnumerator())
+                    int _count = c.Count;
+                    if (_count != 0)
                     {
-                        while (e.MoveNext())
+                        _array = new T[_count];
+                        foreach (T item in collection)
                         {
-                            _count = _undos + 1;
-                            EnsureCapacity(_count);
-                            _array[_undos] = e.Current;
-                            _undos = _count;
+                            _array[_undos++] = item;
                         }
+                    }
+                    break;
+                default:
+                    foreach (T item in collection)
+                    {
+                        EnsureCapacity(_undos + 1);
+                        _array[_undos++] = item;
                     }
                     break;
             }
